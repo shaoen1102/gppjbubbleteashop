@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>今天要來喝點什麼？- 手搖飲料雙重篩選進化版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        /* 功能 D：隨機抽籤時卡片快速跳動效果 */
+        @keyframes shuffleEffect {
+            0% { transform: scale(0.96) rotate(-1deg); opacity: 0.8; }
+            50% { transform: scale(1.04) rotate(1deg); opacity: 0.95; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .shuffle-active {
+            animation: shuffleEffect 0.12s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-amber-50/40 text-gray-800 min-h-screen font-sans">
+
+    <div id="app" class="container mx-auto px-4 py-8 max-w-6xl">
+        
+        <header class="text-center my-10">
+            <h1 class="text-4xl md:text-5xl font-black text-amber-600 tracking-wider mb-3">
+                <i class="fas fa-bubble-tea mr-2 text-amber-500"></i>今天要來喝點什麼？
+            </h1>
+            <p class="text-gray-500 text-sm md:text-base">
+                <span v-if="isUsingMock" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                    <span class="w-2 h-2 rounded-full bg-amber-500"></span> 離線展示模式 (使用模擬數據)
+                </span>
+                <span v-else class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> 雲端試算表即時連線中
+                </span>
+            </p>
+        </header>
+
+        <div v-if="isLoading" class="text-center py-20">
+            <i class="fas fa-circle-notch animate-spin text-amber-500 text-5xl mb-4"></i>
+            <p class="text-gray-500 font-bold text-lg">正在從雲端試算表調製最新的飲品清單中...</p>
+        </div>
+
+        <div v-else>
+            <div class="max-w-2xl mx-auto mb-10">
+                <div class="relative shadow-xl rounded-full overflow-hidden border-2 border-amber-400 focus-within:border-amber-500 transition-all duration-300 bg-white">
+                    <input 
+                        type="text" 
+                        v-model="searchKeyword"
+                        placeholder="輸入飲料品名、標籤、或者店家名稱試試看..." 
+                        class="w-full px-6 py-4 pr-12 text-lg focus:outline-none text-gray-700"
+                    />
+                    <span class="absolute right-5 top-4 text-amber-500 text-xl">
+                        <i class="fas fa-search"></i>
+                    </span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                <button @click="toggleFilterMode('store')" :class="['py-3 px-4 rounded-xl font-bold shadow transition-all duration-200 flex items-center justify-center gap-2', activeMode === 'store' ? 'bg-amber-500 text-white' : 'bg-white hover:bg-amber-100 text-amber-700']">
+                    <i class="fas fa-store"></i> 依店家挑選
+                </button>
+                <button @click="toggleFilterMode('tag')" :class="['py-3 px-4 rounded-xl font-bold shadow transition-all duration-200 flex items-center justify-center gap-2', activeMode === 'tag' ? 'bg-amber-500 text-white' : 'bg-white hover:bg-amber-100 text-amber-700']">
+                    <i class="fas fa-tags"></i> 依標籤挑選
+                </button>
+                <button @click="toggleFilterMode('price')" :class="['py-3 px-4 rounded-xl font-bold shadow transition-all duration-200 flex items-center justify-center gap-2', activeMode === 'price' ? 'bg-amber-500 text-white' : 'bg-white hover:bg-amber-100 text-amber-700']">
+                    <i class="fas fa-dollar-sign"></i> 用價格查詢
+                </button>
+                <button @click="startLuckyDraw" class="py-3 px-4 rounded-xl font-bold shadow bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white transition-all duration-200 flex items-center justify-center gap-2 transform hover:scale-105">
+                    <i class="fas fa-dice"></i> 抽籤功能 (隨機)
+                </button>
+            </div>
+
+            <div class="bg-white rounded-2xl p-6 shadow-md border border-amber-100 mb-8 transition-all duration-300" v-if="activeMode !== 'none'">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h3 class="text-lg font-bold text-gray-700 flex items-center gap-2">
+                        <i class="fas fa-sliders-h text-amber-500"></i>
+                        <span v-if="activeMode === 'store'">功能 A：按手搖店家快速過濾</span>
+                        <span v-if="activeMode === 'tag'">功能 B：按風味分類多選篩選</span>
+                        <span v-if="activeMode === 'price'">功能 C：設定預算價格區間 (M杯或L杯符合皆可)</span>
+                    </h3>
+                    <button @click="resetFilters" class="text-sm text-gray-400 hover:text-red-500 font-medium">
+                        <i class="fas fa-sync-alt"></i> 重設條件
+                    </button>
+                </div>
+
+                <div v-if="activeMode === 'store'" class="flex flex-wrap gap-2">
+                    <button 
+                        v-for="store in uniqueStores" 
+                        :key="store"
+                        @click="selectedStore = (selectedStore === store ? '' : store)"
+                        :class="['px-4 py-2 rounded-full text-sm font-semibold transition-all', selectedStore === store ? 'bg-amber-600 text-white shadow-md' : 'bg-gray-100 hover:bg-gray-200 text-gray-700']"
+                    >
+                        {{ store }}
+                    </button>
+                </div>
+
+                <div v-if="activeMode === 'tag'">
+                    <div class="flex items-center gap-2 mb-4 bg-gray-50 p-2 rounded-xl w-fit border border-gray-100">
+                        <span class="text-xs font-bold text-gray-400 ml-2">篩選模式：</span>
+                        <button 
+                            @click="tagMatchMode = 'OR'"
+                            :class="['px-3 py-1 rounded-lg text-xs font-black transition-all', tagMatchMode === 'OR' ? 'bg-amber-500 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200']"
+                        >
+                            聯集過濾 (包含任一標籤即可)
+                        </button>
+                        <button 
+                            @click="tagMatchMode = 'AND'"
+                            :class="['px-3 py-1 rounded-lg text-xs font-black transition-all', tagMatchMode === 'AND' ? 'bg-red-500 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200']"
+                        >
+                            交集篩選 (必須同時包含所有勾選)
+                        </button>
+                    </div>
+
+                    <div class="flex flex-wrap gap-3">
+                        <label v-for="tag in uniqueTags" :key="tag" class="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-lg cursor-pointer hover:bg-amber-50/60 transition-all border border-transparent hover:border-amber-200">
+                            <input type="checkbox" :value="tag" v-model="selectedTags" class="w-4 h-4 accent-amber-500 rounded">
+                            <span class="text-sm font-medium text-gray-700">{{ tag }}</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div v-if="activeMode === 'price'" class="flex flex-col sm:flex-row items-center gap-4 max-w-md">
+                    <div class="w-full">
+                        <label class="text-xs text-gray-400 block mb-1">最低預算 (Min Price)</label>
+                        <input type="number" v-model.number="priceRange.min" class="w-full border rounded-lg px-3 py-2 focus:border-amber-400 focus:outline-none" placeholder="0">
+                    </div>
+                    <div class="text-gray-400 font-bold self-end mb-2 hidden sm:block">～</div>
+                    <div class="w-full">
+                        <label class="text-xs text-gray-400 block mb-1">最高預算 (Max Price)</label>
+                        <input type="number" v-model.number="priceRange.max" class="w-full border rounded-lg px-3 py-2 focus:border-amber-400 focus:outline-none" placeholder="150">
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <p class="text-gray-500 font-medium">
+                    為您奉上 <span class="text-amber-600 font-bold text-lg">{{ filteredDrinks.length }}</span> 款精選飲品
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div 
+                    v-for="drink in filteredDrinks" 
+                    :key="drink.id"
+                    class="bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-100 flex flex-col justify-between transform hover:-translate-y-1"
+                >
+                    <div class="p-6">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="bg-amber-100 text-amber-800 text-xs font-bold px-2.5 py-1 rounded-md">
+                                <i class="fas fa-store mr-1"></i>{{ drink.店家 }}
+                            </span>
+                            <span v-if="drink.店家推薦 === 1" class="text-red-500 bg-red-50 text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <i class="fas fa-star"></i> 店家推薦
+                            </span>
+                        </div>
+
+                        <h2 class="text-xl font-black text-gray-800 mb-2 tracking-tight">
+                            {{ drink.飲料品項 }}
+                        </h2>
+
+                        <p class="text-gray-400 text-xs mb-4 min-h-[1.5rem]">
+                            {{ drink.備註 || '' }}
+                        </p>
+
+                        <div class="flex flex-wrap gap-1.5 mb-4">
+                            <span 
+                                v-for="tag in drink.標籤分類" 
+                                :key="tag"
+                                class="bg-gray-100 text-gray-600 text-xs font-semibold px-2 py-0.5 rounded-full"
+                            >
+                                # {{ tag }}
+                            </span>
+                            <span v-if="drink.加料內容 === 1" class="bg-teal-50 text-teal-700 border border-teal-200 text-xs font-semibold px-2 py-0.5 rounded-full">
+                                <i class="fas fa-plus-circle mr-0.5"></i>有料
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-between items-center text-sm">
+                        <div class="text-gray-400 font-medium">單價規格</div>
+                        <div class="flex gap-3">
+                            <span v-if="drink.價格M" class="text-amber-700 font-bold">
+                                <span class="text-xs bg-amber-200/60 px-1.5 py-0.5 rounded mr-0.5">M</span>${{ drink.價格M }}
+                            </span>
+                            <span v-if="drink.價格L" class="text-amber-700 font-extrabold text-base">
+                                <span class="text-xs bg-amber-500 text-white px-1.5 py-0.5 rounded mr-0.5">L</span>${{ drink.價格L }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="filteredDrinks.length === 0" class="text-center py-20 bg-white rounded-2xl shadow-inner border border-dashed border-gray-200">
+                <i class="fas fa-mug-hot text-gray-300 text-5xl mb-4"></i>
+                <p class="text-gray-400 font-medium">搜不到對應的手搖飲，換個關鍵字或清除篩選再試試吧！</p>
+            </div>
+        </div>
+
+        <div v-if="showLuckyModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div :class="['bg-white rounded-3xl max-w-md w-full shadow-2xl p-6 relative overflow-hidden border-4 border-amber-400 transition-all duration-300', isShuffling ? 'shuffle-active' : '']">
+                <div class="absolute top-0 right-0 transform translate-x-12 -translate-y-12 w-40 h-40 bg-amber-100 rounded-full -z-10 opacity-50"></div>
+                
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-black text-red-500 flex items-center gap-2">
+                        <i class="fas fa-bullhorn text-xl animate-bounce"></i> 
+                        {{ isShuffling ? '看看今天命運之神點哪一杯...' : '本日命中注定特調！' }}
+                    </h3>
+                    <button v-if="!isShuffling" @click="showLuckyModal = false" class="text-gray-400 hover:text-gray-600 text-xl">
+                        <i class="fas fa-times-circle"></i>
+                    </button>
+                </div>
+
+                <div class="text-center my-6 py-5 bg-amber-50/50 rounded-2xl border border-amber-200" v-if="luckyDrink">
+                    <span class="inline-block bg-amber-600 text-white text-xs font-bold px-3 py-1 rounded-full mb-2">
+                        {{ luckyDrink.店家 }}
+                    </span>
+                    <h2 class="text-3xl font-black text-gray-800 my-2 tracking-tight">
+                        {{ luckyDrink.飲料品項 }}
+                    </h2>
+                    
+                    <div class="flex justify-center gap-4 my-3 font-bold">
+                        <span v-if="luckyDrink.價格M" class="text-amber-700 text-lg">M杯: ${{ luckyDrink.價格M }}</span>
+                        <span v-if="luckyDrink.價格L" class="text-amber-700 text-xl font-black">L杯: ${{ luckyDrink.價格L }}</span>
+                    </div>
+                    
+                    <p class="text-gray-400 text-xs px-4 mt-2">
+                        {{ luckyDrink.備註 || '這杯特調絕對適合你現在的心情！' }}
+                    </p>
+                </div>
+
+                <div class="flex gap-2">
+                    <button v-if="!isShuffling" @click="startLuckyDraw" class="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 rounded-xl font-bold transition-all text-sm">
+                        再抽一次
+                    </button>
+                    <button v-if="!isShuffling" @click="showLuckyModal = false" class="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-white py-3 rounded-xl font-bold transition-all text-sm shadow-md text-center">
+                        好，就喝它！
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        // ⚠️ 部署好 GAS 後，請把下方的引號網址替換為你的 Web App URL 網址 ⚠️
+        const GAS_API_URL = "https://script.google.com/macros/s/AKfycbxAbXPB15jqmH3jaYaGTrPWLYIBwa16ab7xA4vg0xdLGt7Idv9s-B2Lm9by77zArF8Zfg/exec";
+
+        createApp({
+            setup() {
+                const drinks = ref([]);
+                const isLoading = ref(true);
+                const isUsingMock = ref(false); 
+
+                // 核心控制變數
+                const searchKeyword = ref('');    
+                const activeMode = ref('none');   
+                const selectedStore = ref('');    
+                const selectedTags = ref([]);     
+                const priceRange = ref({ min: null, max: null }); 
+                
+                // 新增：標籤篩選邏輯狀態變數 ('OR' 代表聯集，'AND' 代表交集)
+                const tagMatchMode = ref('OR'); 
+
+                // 抽籤變數
+                const showLuckyModal = ref(false); 
+                const isShuffling = ref(false);    
+                const luckyDrink = ref(null);      
+
+                // 符合規格欄位的 Mock Data 模擬數據群
+                const mockData = [
+                    { id: 1, 店家: '大苑子', 飲料品項: '烏龍綠茶', 價格M: '35', 價格L: '45', 標籤分類: ['綠茶', '烏龍茶'], 加料內容: 0, 店家推薦: 1, 備註: '茶韻回甘' },
+                    { id: 2, 店家: '可不可熟成紅茶', 飲料品項: '雪藏紅茶', 價格M: '50', 價格L: '60', 標籤分類: ['紅茶', '純茶', '冰淇淋'], 加料內容: 1, 店家推薦: 1, 備註: '經典果香加冰淇淋' },
+                    { id: 3, 店家: '珍煮丹', 飲料品項: '黑糖珍珠鮮奶', 價格M: '65', 價格L: '80', 標籤分類: ['鮮奶茶', '黑糖', '珍珠'], 加料內容: 1, 店家推薦: 1, 備註: '甜度固定' },
+                    { id: 4, 店家: '五十嵐', 飲料品項: '四季春青茶', 價格M: '30', 價格L: '35', 標籤分類: ['青茶', '純茶'], 加料內容: 0, 店家推薦: 0, 備註: '' },
+                    { id: 5, 店家: '大苑子', 飲料品項: '芝芝綠茶', 價格M: '60', 價格L: '75', 標籤分類: ['綠茶', '奶蓋'], 加料內容: 0, 店家推薦: 1, 備註: '鹹香綿密奶蓋' }
+                ];
+
+                const fetchDrinks = async () => {
+                    try {
+                        isLoading.value = true;
+                        const response = await fetch(GAS_API_URL);
+                        if (!response.ok) throw new Error("API連線失敗");
+                        const data = await response.json();
+                        
+                        if (Array.isArray(data)) {
+                            drinks.value = data;
+                            isUsingMock.value = false;
+                        } else {
+                            throw new Error("格式非陣列");
+                        }
+                    } catch (error) {
+                        console.warn("無法取得 GAS 線上資料，改為啟用 Mock Data 模擬數據呈現模式:", error);
+                        drinks.value = mockData;
+                        isUsingMock.value = true;
+                    } finally {
+                        isLoading.value = false;
+                    }
+                };
+
+                onMounted(() => {
+                    if (GAS_API_URL.includes("請把你的GAS")) {
+                        drinks.value = mockData;
+                        isUsingMock.value = true;
+                        isLoading.value = false;
+                    } else {
+                        fetchDrinks();
+                    }
+                });
+
+                const uniqueStores = computed(() => {
+                    return [...new Set(drinks.value.map(d => d.店家).filter(Boolean))];
+                });
+
+                const uniqueTags = computed(() => {
+                    let totalTags = [];
+                    drinks.value.forEach(d => {
+                        if (Array.isArray(d.標籤分類)) {
+                            totalTags = totalTags.concat(d.標籤分類);
+                        }
+                    });
+                    return [...new Set(totalTags.filter(Boolean))];
+                });
+
+                // --- 🌟 核心控制中心：交叉篩選邏輯 🌟 ---
+                const filteredDrinks = computed(() => {
+                    try {
+                        return drinks.value.filter(drink => {
+                            
+                            // 1. 頂部搜尋框模糊比對
+                            if (searchKeyword.value.trim() !== '') {
+                                const keyword = searchKeyword.value.toLowerCase();
+                                const matchName = drink.飲料品項.toLowerCase().includes(keyword);
+                                const matchStore = drink.店家.toLowerCase().includes(keyword);
+                                const matchTags = drink.標籤分類.some(t => t.toLowerCase().includes(keyword));
+                                if (!matchName && !matchStore && !matchTags) return false;
+                            }
+
+                            // 2. 功能 A：依店家過濾
+                            if (activeMode.value === 'store' && selectedStore.value) {
+                                if (drink.店家 !== selectedStore.value) return false;
+                            }
+
+                            // 3. 🔥 功能 B 改版：動態支援聯集 (OR) 與 交集 (AND) 篩選邏輯 🔥
+                            if (activeMode.value === 'tag' && selectedTags.value.length > 0) {
+                                if (tagMatchMode.value === 'OR') {
+                                    // 聯集邏輯：飲料標籤與勾選標籤「只要有一個對上」就通過
+                                    const hasAnyTag = selectedTags.value.some(t => drink.標籤分類.includes(t));
+                                    if (!hasAnyTag) return false;
+                                } else if (tagMatchMode.value === 'AND') {
+                                    // 交集邏輯：勾選的每一個標籤，「飲料都必須全數擁有」才算數
+                                    const hasAllTags = selectedTags.value.every(t => drink.標籤分類.includes(t));
+                                    if (!hasAllTags) return false;
+                                }
+                            }
+
+                            // 4. 功能 C：價格區間比對
+                            if (activeMode.value === 'price') {
+                                const minPrice = priceRange.value.min !== null && priceRange.value.min !== '' ? Number(priceRange.value.min) : 0;
+                                const maxPrice = priceRange.value.max !== null && priceRange.value.max !== '' ? Number(priceRange.value.max) : Infinity;
+                                
+                                const valM = drink.價格M ? Number(drink.價格M) : null;
+                                const valL = drink.價格L ? Number(drink.價格L) : null;
+                                
+                                let matchM = false;
+                                let matchL = false;
+                                
+                                if (valM !== null && valM >= minPrice && valM <= maxPrice) matchM = true;
+                                if (valL !== null && valL >= minPrice && valL <= maxPrice) matchL = true;
+                                
+                                if (!matchM && !matchL) return false;
+                            }
+
+                            return true;
+                        });
+                    } catch (err) {
+                        console.error("篩選過程發生異常:", err);
+                        return [];
+                    }
+                });
+
+                const toggleFilterMode = (mode) => {
+                    activeMode.value = activeMode.value === mode ? 'none' : mode;
+                };
+
+                const resetFilters = () => {
+                    selectedStore.value = '';
+                    selectedTags.value = [];
+                    priceRange.value = { min: null, max: null };
+                    tagMatchMode.value = 'OR'; // 恢復預設聯集模式
+                };
+
+                const startLuckyDraw = () => {
+                    const pool = filteredDrinks.value.length > 0 ? filteredDrinks.value : drinks.value;
+                    if (pool.length === 0) return;
+                    
+                    showLuckyModal.value = true;
+                    isShuffling.value = true;
+
+                    let count = 0;
+                    const timer = setInterval(() => {
+                        const idx = Math.floor(Math.random() * pool.length);
+                        luckyDrink.value = pool[idx];
+                        count++;
+                        
+                        if (count > 12) {
+                            clearInterval(timer);
+                            isShuffling.value = false;
+                        }
+                    }, 90);
+                };
+
+                return {
+                    drinks,
+                    isLoading,
+                    isUsingMock,
+                    searchKeyword,
+                    activeMode,
+                    selectedStore,
+                    selectedTags,
+                    priceRange,
+                    tagMatchMode, // 導出至畫面使用
+                    showLuckyModal,
+                    isShuffling,
+                    luckyDrink,
+                    uniqueStores,
+                    uniqueTags,
+                    filteredDrinks,
+                    toggleFilterMode,
+                    resetFilters,
+                    startLuckyDraw
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
